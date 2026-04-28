@@ -1,0 +1,139 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alloy
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "nodes/proxy", "services", "endpoints", "pods", "pods/log"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alloy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alloy
+subjects:
+- kind: ServiceAccount
+  name: alloy
+  namespace: default
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+data:
+  config.alloy: |-
+    // 1. Khám phá các Pod trong cluster
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    // 2. Lọc các Pod có label monitoring/logs = true
+    discovery.relabel "pod_logs" {
+      targets = discovery.kubernetes.pods.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_monitoring_logs"]
+        regex = "true"
+        action = "keep"
+      }
+
+      // Gán các nhãn tĩnh ban đầu
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "podid"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "containername"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app"]
+        target_label  = "servicename"
+      }
+
+    // 3. Tự động thu thập logs từ Pods được tìm thấy
+    loki.source.kubernetes "pod_logs" {
+      targets    = discovery.relabel.pod_logs.output
+      forward_to = [loki.process.parse_json.receiver]
+    }
+
+    // 4. Xử lý Log (Parse JSON để gom multiline và gán label)
+    loki.process "parse_json" {
+      forward_to = [loki.write.default.receiver]
+
+      // Extract JSON vì Spring Boot / Tomcat Access đều bắn JSON ra console
+      stage.json {
+        expressions = {
+          level = "level",
+          type  = "type",
+        }
+      }
+
+      // Set label 'level' dựa trên JSON parsed
+      stage.labels {
+        values = {
+          level = "level",
+          type  = "type",
+        }
+      }
+    }
+
+    // 5. Gửi tới Loki
+    loki.write "default" {
+      endpoint {
+        url = "http://loki:3100/loki/api/v1/push"
+      }
+    }
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alloy
+spec:
+  selector:
+    matchLabels:
+      app: alloy
+  template:
+    metadata:
+      labels:
+        app: alloy
+    spec:
+      serviceAccountName: alloy
+      containers:
+      - name: alloy
+        image: grafana/alloy:v1.6.0
+        args:
+        - run
+        - /etc/alloy/config.alloy
+        - --storage.path=/var/lib/alloy
+        - --server.http.listen-addr=0.0.0.0:12345
+        ports:
+        - containerPort: 12345
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/alloy
+        # Mount varlog để đọc logs từ GKE Node (containerd logs)
+        - name: varlog
+          mountPath: /var/log
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: alloy-config
+      - name: varlog
+        hostPath:
+          path: /var/log

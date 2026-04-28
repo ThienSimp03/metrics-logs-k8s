@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Appender ghi log ra console -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <!-- Sử dụng LogstashEncoder để ghi log dưới dạng JSON -->
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <!-- Thêm các trường tuỳ chỉnh để tương thích với Alloy / Loki (nếu cần) -->
+            <customFields>{"type":"app"}</customFields>
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
+        </encoder>
+    </appender>
+
+    <!-- Cấu hình mặc định cho tất cả các log -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE" />
+    </root>
+
+    <!-- Ghi log từ package của ứng dụng với mức DEBUG -->
+    <logger name="nobrain.logs_loki" level="DEBUG" />
+
+</configuration>

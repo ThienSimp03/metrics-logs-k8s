@@ -1,0 +1,2 @@
+﻿loki.source.kubernetes "pod_logs" { targets = [] 
+ forward_to = [] }

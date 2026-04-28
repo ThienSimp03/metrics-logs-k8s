@@ -1,0 +1,62 @@
+# Kế hoạch triển khai Cloud Native Logging với Spring Boot, Alloy, Loki, Grafana
+
+Dự án này sẽ tạo ra một ứng dụng Spring Boot demo tích hợp cấu hình logging chi tiết và cung cấp bộ manifests/Helm (cho cả Minikube và GKE) để thu thập và quan sát logs thông qua Grafana Loki & Alloy.
+
+- Sử dụng JSON format cho tất cả log output ở console. Trong môi trường Cloud Native, việc in log dưới định dạng JSON là cách tốt nhất để đảm bảo stack traces hoặc log object nhiều dòng được gộp thành 1 log duy nhất thay vì bị Container runtime cắt thành nhiều dòng rời rạc gây khó đọc trên Loki.
+- Version của các image Docker:
+  - Spring Boot App: `eclipse-temurin:21-jre-alpine`
+  - Grafana Alloy: `v1.6.0` (Latest stable compatible)
+  - Grafana Loki: `3.3.0` (Latest stable compatible)
+  - Grafana: `11.5.0` (Latest stable compatible)
+
+## Các bước cấu hình
+
+### Cấu hình Spring Boot Application (Application Logging & Tomcat Access Log)
+
+1. **`pom.xml`**:
+   - Thêm dependency `micrometer-tracing-bridge-brave` để sinh ra TraceID và SpanID.
+   - Thêm `logstash-logback-encoder` để xuất log Spring Boot dạng JSON chuẩn, giúp gộp stack trace hiệu quả.
+
+2. **`src/main/resources/logback-spring.xml`**:
+   - Cấu hình Logback để đẩy log của Spring Boot ra `stdout` dưới dạng JSON bao gồm: `threadname`, `time`, `method` (logger/class), `message`, `level`, và stack trace.
+
+3. **`src/main/resources/application.properties`**:
+   - Cấu hình bật Tomcat Access Logs đẩy thẳng ra `stdout` (`/dev/stdout`) dưới dạng JSON: có trường `"type":"access"` để phân biệt, các trường thông tin: `clientip`, `httpmethod`, `status`, `duration`, `url`, `traceid`, `spanid`.
+
+4. **`src/main/java/nobrain/logs_loki/config/TraceFilter.java`**:
+   - Thêm một Servlet Filter nhỏ để copy `traceId` và `spanId` từ MDC vào Request Attributes. Điều này giúp Tomcat Access Log có thể đọc được `traceId` thông qua pattern `%{traceId}r`.
+
+5. **`src/main/java/nobrain/logs_loki/model/User.java` & `Order.java`**:
+   - Tạo các class Model với các thuộc tính cơ bản để phục vụ việc in object log.
+
+6. **`src/main/java/nobrain/logs_loki/controller/LogDemoController.java`**:
+   - Controller chứa các API demo sinh ra nhiều loại log:
+     - `INFO`: In log chuỗi, object bình thường.
+     - `DEBUG`: Log chi tiết.
+     - `ERROR`: Quăng exception để sinh ra stack trace.
+
+### Dockerization
+
+- **`Dockerfile`**:
+  - Dùng `eclipse-temurin:21-jre-alpine` để chạy ứng dụng nhằm tối ưu dung lượng.
+
+### Kubernetes Manifests
+
+Môi trường sẽ được phân chia thành 2 thư mục `k8s/minikube` và `k8s/gke`.
+
+1. **`app-deployment.yaml`**:
+   - Triển khai Spring Boot App (Deployment & Service).
+   - Gắn label `monitoring/logs: "true"` cho Pod.
+
+2. **`loki.yaml`**:
+   - Triển khai Loki dạng `StatefulSet` (1 replica).
+   - Kèm theo `PersistentVolumeClaim` (PVC) lưu trữ. Cấu hình Loki retention period là `30d`.
+
+3. **`alloy.yaml`**:
+   - Triển khai Grafana Alloy dạng `DaemonSet`. Mount các thư mục logs của Node.
+   - Configmap chứa cấu hình `config.alloy` để tự động discover các pods có label `monitoring/logs: "true"`.
+   - Cấu hình Alloy tách nội dung parse từ JSON, thêm các labels cần thiết như `podid` (pod name), `level`, `servicename` (app name). Các thông tin metadata khác để không làm tốn index.
+
+4. **`grafana.yaml`**:
+   - Triển khai Grafana dạng `StatefulSet` (1 replica).
+   - Tự động mount ConfigMap data source nối tới Loki.

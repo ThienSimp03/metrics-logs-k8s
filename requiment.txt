@@ -1,0 +1,21 @@
+Viết demo dự án sẽ chạy trong minikube theo chuẩn cloud native
+	1, các logs dùng slf4j in ra các loại logs chỉ gồm type info, error, debug
+	2, logs có các loại logs bình thường chuỗi, object, stack trace,...
+	3, viết demo hẳn vào controller luôn ko cần logic cầu kì miễn sao đa dạng logs ko có cấu hình db hãy viết logs test
+	4, các class model sẽ được triển viết vào thư mục trong src có folder là model
+	5, dự án có 2 loại logs 1 là logs của spring boot 2 là logs của tomcat
+		5.1, spring boot tui cần có các thông tin cơ bản như threadname, time, method, message logs, level của logs  là gì (chú ý ở các loại logs trên 1),..
+		5.2, logs của tomcat (tạo type là access để phân biệt giữa 2 loại logs) cần biết clientip, httpmethod, status, traceid, spanid, url, duration gọi hết bao nhiêu s,....
+	6, step viết helm chart + viết comment chú thích từng cấu hình để làm gì, tạo folder k8s/minikube và k8s/gke để chỉ rõ 2 môi trường lưu ý mỗi kind monitor này là 1 statefullset chỉ có 1 replica:
+		+ grafana: sẽ cấu hình view logs của loki
+		+ loki: sẽ thu thập logs được gửi bởi alloy cấu hình chia theo ngày, tối đa lưu 30days, tách label chỉ những label quan trọng,... (theo chuẩn cloud native), sẽ được lưu trữ ở PVC k8s,
+			docs(https://grafana.com/docs/loki/latest/, https://grafana.com/docs/loki/latest/)
+		+ alloy sẽ thu thập logs của các pods trong node alloy sẽ triển khai theo demonSet sẽ chỉ cấu hình quét các pods có label là monitoring/logs = true
+			+ logs các pods gồm 5.1 và 5.2 ở trên:
+				lưu ý: 
+					+ tui các thông tin ở logs sẽ chỉ là metadata tránh hiệu năng của loki ( trừ level của logs), và thông tin của pods như, namespace, containtername, job, appp
+					+ các label chỉ cần podid, level, servicename
+					+ phải thu logs theo chuẩn như những j đã bắn ở console ví dụ như spring boot bắn logs có list object hay stacktrace thì phải gom được vào 1 logs để xem được tránh ví dụ 1 stacktrace lại tạo ra nhiều logs rất xấu
+		+ lưu ý quan trọng tiếp theo là sẽ triển khai lên 2 môi trường nếu cấu hình có khác phải chỉ rõ hoặc tách riêng:
+			+ triển khai lên minikube ở máy cá nhân
+			+ triển khai trên cụm GKE của GCP
