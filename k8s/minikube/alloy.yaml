@@ -61,7 +61,7 @@ data:
       }
       rule {
         source_labels = ["__meta_kubernetes_pod_label_app"]
-        target_label  = "servicename"
+        target_label  = "service_name"
       }
     }
 
@@ -83,7 +83,7 @@ data:
         }
       }
 
-      // Set label 'level' dựa trên JSON parsed
+      // Set label tĩnh dựa trên JSON parsed
       stage.labels {
         values = {
           level = "level",
@@ -91,9 +91,11 @@ data:
         }
       }
 
-      // Giữ log lại dạng metadata cho gọn, không index linh tinh.
-      // Vì là JSON, 1 block log (kể cả chứa stack trace dài) sẽ là 1 line json.
-      // Điều này ngăn chặn việc stack trace bị cắt vụn.
+      // Pack (gói) các label động vào thẳng log JSON thay vì tạo index mới
+      // Điều này giải quyết bài toán High Cardinality cho Loki
+      stage.pack {
+        labels = ["pod", "container", "instance", "job", "podid", "containername", "filename"]
+      }
     }
 
     // 5. Gửi tới Loki
